@@ -1,0 +1,3 @@
+PhotoshopAPI~=0.4.0
+numpy~=2.0.2
+imageio~=2.35.1
