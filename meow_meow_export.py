@@ -15,7 +15,7 @@ import substance_painter.project
 import substance_painter.textureset
 
 # PySide module to build custom UI
-from PySide2 import QtWidgets
+from PySide6 import QtWidgets, QtGui
 from substance_painter.exception import ProjectError
 
 plugin_widgets = []
@@ -242,7 +242,8 @@ def generate_textures():
 
 def start_plugin():
     # Create a text widget for a menu
-    Action = QtWidgets.QAction("Meow Meow Export", triggered=generate_textures)
+    Action = QtGui.QAction(text="Meow Meow Export")
+    Action.triggered.connect(generate_textures)
 
     # Add this widget to the existing File menu of the application
     substance_painter.ui.add_action(
