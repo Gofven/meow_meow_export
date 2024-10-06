@@ -19,65 +19,7 @@ from PySide6 import QtWidgets, QtGui
 from substance_painter.exception import ProjectError
 
 plugin_widgets = []
-
-class LayerData:
-    texture_set_name: str
-    uid: int
-    layer_name: str
-    visible: bool
-
-    def __init__(self,
-                 texture_set_name: str,
-                 uid: int,
-                 layer_name: str,
-                 blending_mode: substance_painter.layerstack.BlendingMode,
-                 visible: bool,
-                 export_root_path: Path):
-        self.texture_set_name = texture_set_name
-        self.uid = uid
-        self.layer_name = layer_name
-        self.blending_mode = blending_mode
-        self.visible = visible
-        self.export_root_path = export_root_path
-
-    def __dict__(self):
-        return dict(texture_set=self.texture_set_name, uid=self.uid, layer=self.layer_name, visible=self.visible)
-
-    @property
-    def export_path(self) -> str:
-        return os.path.join(self.export_root_path, self.texture_set_name)
-
-    @property
-    def file_path(self) -> str:
-        return os.path.join(self.export_path, f"{self.layer_name}.png")
-
-    @property
-    def layer_node(self) -> substance_painter.layerstack.LayerNode:
-        for texture_set in substance_painter.textureset.all_texture_sets():
-            for stack in texture_set.all_stacks():
-                stack_root_nodes = substance_painter.layerstack.get_root_layer_nodes(stack)
-
-                for layer in stack_root_nodes:
-                    if isinstance(layer, substance_painter.layerstack.LayerNode) and layer.uid() == self.uid:
-                        return layer
-
-    @property
-    def psapi_blending_mode(self):
-        return getattr(psapi.enum.BlendMode,
-                       str(self.blending_mode).lower().split('.')[1]) if self.blending_mode else None
-
-    # Focus visibility on one texture in the active TextureSet
-    def focus_visibility(self):
-        for stack in self.layer_node.get_texture_set().all_stacks():
-            stack_root_nodes = substance_painter.layerstack.get_root_layer_nodes(stack)
-
-            for layer in stack_root_nodes:
-                if isinstance(layer, substance_painter.layerstack.LayerNode):
-                    layer.set_visible(layer.uid() == self.uid)
-
-
-staged_data: dict[str: LayerData] = dict()
-
+node_visibility = dict()
 
 def export_textures(layer_data: LayerData):
     # Verify if a project is open before trying to export something
@@ -182,35 +124,64 @@ def generate_psds(export_path: Path, delete_on_success: bool = False):
             shutil.rmtree(os.path.join(str(export_path), texture_set))
 
 
-# Sets all layers visibility back to it's initial values
-def reset_visibility():
-    for layers in staged_data.values():
-        for layer_data in layers:
-            layer_data.layer_node.set_visible(layer_data.visible)
-
-
-# Stores layers in a list including certain previous states
-def save_state(export_path: Path):
+def perform(func_layer: exec,
+            func_group: exec = None,
+            func_layer_args: list = None,
+            func_layer_kwargs: dict = None,
+            func_group_args: list = None,
+            func_group_kwargs: dict = None
+            ):
     for texture_set in substance_painter.textureset.all_texture_sets():
         for stack in texture_set.all_stacks():
             stack_root_nodes = substance_painter.layerstack.get_root_layer_nodes(stack)
-            print(stack.all_channels())
 
-            for layer in stack_root_nodes:
-                if not staged_data.get(texture_set.name()):
-                    staged_data[texture_set.name()] = list()
+            def loop_nodes(nodes):
+                for node in nodes:
+                    if isinstance(node, substance_painter.layerstack.GroupLayerNode):
+                        if func_group:
+                            func_group(node, *func_group_args, **func_group_kwargs)
 
-                blending_mode = layer.get_blending_mode(channel=substance_painter.layerstack.ChannelType.BaseColor)
+                        loop_nodes(node.sub_layers())
 
-                staged_data[texture_set.name()].append(LayerData(texture_set.name(),
-                                                                 layer.uid(),
-                                                                 layer.get_name(),
-                                                                 blending_mode,
-                                                                 True,
-                                                                 export_root_path=export_path))
+                    elif isinstance(node, substance_painter.layerstack.LayerNode):
+                        func_layer(node, *func_layer_args, **func_layer_kwargs)
+
+            loop_nodes(stack_root_nodes)
+
+
+# Save dict containing visibility info for each object
+def save_state(node):
+    node_visibility[node.uid()] = node.is_visible()
+
+
+# Toggle node transparency
+def set_visibility(node, visible: bool):
+    if node.is_visible():
+        node.set_visible(visible)
+
+
+# Reset node transparency
+def reset_visibility(node):
+    if is_visible := node_visibility.get(node.uid()):
+        node.set_visible(is_visible)
+
+
+# Export node
+def export(node: substance_painter.layerstack.LayerNode):
+    layer_number = list(node_visibility).index(node.uid())
+    total_layers = len(node_visibility)
+
+    set_visibility(node, True)
+    substance_painter.logging.log(substance_painter.logging.INFO,
+                                  channel="Meow Meow Export",
+                                  message=f"Exporting layer {layer_number} of {total_layers} "
+                                          f"({node.get_texture_set().name()}/{node.get_name()})...")
+    export_textures(node)
+    set_visibility(node, False)
 
 
 def generate_textures():
+    # Check if active project is loaded
     try:
         export_path = substance_painter.project.file_path()
     except ProjectError as e:
@@ -222,19 +193,10 @@ def generate_textures():
     # Create folder if it doesn't exist
     export_path.mkdir(parents=True, exist_ok=True)
 
-    save_state(export_path=export_path)
+    perform(save_state)  # Save visibility info
+    perform(set_visibility, func_layer_kwargs=dict(visible=False))  # Hide all layer nodes
 
-    total_layers = sum([len(x) for x in staged_data.values()])
-
-    layer = 1
-    for i, layers in enumerate(staged_data.values()):
-        for j, layer_data in enumerate(layers):
-            substance_painter.logging.log(substance_painter.logging.INFO,
-                                          channel="Meow Meow Export",
-                                          message=f"Exporting layer {layer} of {total_layers} "
-                                                  f"({layer_data.texture_set_name}/{layer_data.layer_name})...")
-            export_textures(layer_data=layer_data)
-            layer += 1
+    total_layers = len(node_visibility)
 
     reset_visibility()
     generate_psds(delete_on_success=True, export_path=export_path)
