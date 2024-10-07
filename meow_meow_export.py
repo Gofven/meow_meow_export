@@ -9,6 +9,7 @@ import numpy as np
 import imageio.v3 as iio
 
 # Substance 3D Painter modules
+from substance_painter.layerstack import LayerNode, GroupLayerNode, TextureSet
 import substance_painter.ui
 import substance_painter.export
 import substance_painter.project
@@ -21,29 +22,25 @@ from substance_painter.exception import ProjectError
 plugin_widgets = []
 node_visibility = dict()
 
-def export_textures(layer_data: LayerData):
+def export_textures(node: LayerNode, export_path: Path):
     # Verify if a project is open before trying to export something
     if not substance_painter.project.is_open():
         return
 
     # Set the active stack to selected Layer
-    stack = substance_painter.layerstack.Stack.from_name(texture_set_name=layer_data.texture_set_name)
+    stack = node.get_stack()
     substance_painter.textureset.set_active_stack(stack)
-
-    layer_data.focus_visibility()
-
-    Path(layer_data.export_path).mkdir(parents=True, exist_ok=True)
 
     # Build the configuration
     export_config = {
         "exportShaderParams": False,
-        "exportPath": str(layer_data.export_path),
+        "exportPath": str(export_path),
         "defaultExportPreset": "2d_view",
         "exportPresets": [
             {"name": "2d_view",
              "maps": [
                  {
-                     "fileName": layer_data.layer_name,
+                     "fileName": node.uid(),
                      "channels": [
                          {
                              "destChannel": "R",
@@ -97,33 +94,62 @@ def export_textures(layer_data: LayerData):
 
 
 # TODO Add support for group layers, aswell as opacity
-def generate_psds(export_path: Path, delete_on_success: bool = False):
-    for texture_set, layers in staged_data.items():
-        layered_file = psapi.LayeredFile_8bit(psapi.enum.ColorMode.rgb, 4096, 4096)
+def generate_psds(export_path: Path, cache_path: Path, delete_on_success: bool = False):
+    for texture_set in substance_painter.textureset.all_texture_sets():
+        layered_file = psapi.LayeredFile_8bit(psapi.enum.ColorMode.rgb, 4096, 4096)  # Create file
 
-        for layer_data in layers:
-            for im_path in glob.glob(layer_data.file_path):
-                image = iio.imread(im_path)
+        for stack in texture_set.all_stacks():
+            stack_root_nodes = substance_painter.layerstack.get_root_layer_nodes(stack)
 
-                data = np.zeros((image.shape[2], image.shape[0], image.shape[1]), np.uint8)
-                data[0] = image[:, :, 0]
-                data[1] = image[:, :, 1]
-                data[2] = image[:, :, 2]
-                data[3] = image[:, :, 3]
+            def loop_nodes(nodes, group: psapi.GroupLayer_8bit = None):
+                for node in nodes:
+                    if isinstance(node, substance_painter.layerstack.GroupLayerNode):
+                        group = psapi.GroupLayer_8bit(layer_name=node.get_name(),
+                                                      blend_mode=get_psapi_blending_mode(node),
+                                                      height=4096,
+                                                      width=4096)
+                        if not group:
+                            layered_file.add_layer(group)
 
-                layer = psapi.ImageLayer_8bit(data,
-                                              blend_mode=layer_data.psapi_blending_mode,
-                                              layer_name=os.path.basename(im_path).split('.')[0],
-                                              height=4096,
-                                              width=4096)
-                layered_file.add_layer(layer)
+                        else:
+                            group.add_layer(layered_file=layered_file,
+                                            layer=group)
+
+                        loop_nodes(node.sub_layers(), group=group)
+
+                    elif isinstance(node, substance_painter.layerstack.LayerNode):
+                        im_path = os.path.join(cache_path, f'{node.uid()}.png')
+                        image = iio.imread(im_path)
+
+                        data = np.zeros((image.shape[2], image.shape[0], image.shape[1]), np.uint8)
+                        data[0] = image[:, :, 0]
+                        data[1] = image[:, :, 1]
+                        data[2] = image[:, :, 2]
+                        data[3] = image[:, :, 3]
+
+                        layer = psapi.ImageLayer_8bit(data,
+                                                      blend_mode=get_psapi_blending_mode(node),
+                                                      layer_name=os.path.basename(im_path).split('.')[0],
+                                                      height=4096,
+                                                      width=4096)
+
+                        if not group:
+                            layered_file.add_layer(layer)
+
+                        else:
+                            group.add_layer(layered_file=layered_file,
+                                            layer=layer)
+
+            loop_nodes(stack_root_nodes)
 
         layered_file.write(Path(os.path.join(str(export_path), f"{texture_set}.psd")))
 
-        if delete_on_success:
-            shutil.rmtree(os.path.join(str(export_path), texture_set))
+    # Delete cache on completion
+    if delete_on_success:
+        shutil.rmtree(str(cache_path))
 
 
+# Performs a method on every node
 def perform(func_layer: exec,
             func_group: exec = None,
             func_layer_args: list = None,
@@ -149,6 +175,13 @@ def perform(func_layer: exec,
             loop_nodes(stack_root_nodes)
 
 
+def get_psapi_blending_mode(node: LayerNode):
+    if node.get_blending_mode():
+        return getattr(psapi.enum.BlendMode, str(node.get_blending_mode()).lower().split('.')[1])
+
+    return None
+
+
 # Save dict containing visibility info for each object
 def save_state(node):
     node_visibility[node.uid()] = node.is_visible()
@@ -167,7 +200,7 @@ def reset_visibility(node):
 
 
 # Export node
-def export(node: substance_painter.layerstack.LayerNode):
+def export(node: substance_painter.layerstack.LayerNode, export_path: Path):
     layer_number = list(node_visibility).index(node.uid())
     total_layers = len(node_visibility)
 
@@ -176,7 +209,7 @@ def export(node: substance_painter.layerstack.LayerNode):
                                   channel="Meow Meow Export",
                                   message=f"Exporting layer {layer_number} of {total_layers} "
                                           f"({node.get_texture_set().name()}/{node.get_name()})...")
-    export_textures(node)
+    export_textures(node, export_path=export_path)
     set_visibility(node, False)
 
 
@@ -188,18 +221,17 @@ def generate_textures():
         substance_painter.logging.log(substance_painter.logging.ERROR, channel="Meow Meow Export", message=str(e))
         return
 
-    export_path = Path(os.path.join(os.path.dirname(export_path), "meow_meow_export"))
+    export_path = Path(os.path.join(os.path.dirname(export_path), "meow_meow_export"))  # Root export path (for psd)
+    cache_path = export_path.joinpath(".cache")  # Path for exported pngs
 
     # Create folder if it doesn't exist
-    export_path.mkdir(parents=True, exist_ok=True)
+    cache_path.mkdir(parents=True, exist_ok=True)
 
     perform(save_state)  # Save visibility info
     perform(set_visibility, func_layer_kwargs=dict(visible=False))  # Hide all layer nodes
+    perform(export, func_layer_kwargs=dict(export_path=export_path))
 
-    total_layers = len(node_visibility)
-
-    reset_visibility()
-    generate_psds(delete_on_success=True, export_path=export_path)
+    generate_psds(delete_on_success=True, export_path=export_path, cache_path=cache_path)
 
 
 def start_plugin():
