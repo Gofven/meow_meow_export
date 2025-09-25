@@ -4,7 +4,7 @@ from pathlib import Path
 
 # PhotoshopAPI dependencies
 import glob
-import psapi
+import photoshopapi as psapi
 import numpy as np
 import imageio.v3 as iio
 
@@ -108,13 +108,13 @@ def generate_psds(export_path: Path, cache_path: Path, delete_on_success: bool =
 
             def loop_nodes(nodes, group: psapi.GroupLayer_8bit = None):
                 for node in nodes:
+                    print(f"Adding node {node.get_name()}{f' for group {group.name}' if group else ''} to the PSD!")
                     if isinstance(node, substance_painter.layerstack.GroupLayerNode):
                         if get_psapi_blending_mode(node):
                             group_layer = psapi.GroupLayer_8bit(layer_name=node.get_name(),
                                                                 blend_mode=get_psapi_blending_mode(node))
                             if not group:
                                 layered_file.add_layer(group_layer)
-                                print(layered_file.layers)
 
                             else:
                                 group.add_layer(layered_file=layered_file,
@@ -137,7 +137,9 @@ def generate_psds(export_path: Path, cache_path: Path, delete_on_success: bool =
                                                               blend_mode=get_psapi_blending_mode(node),
                                                               layer_name=node.get_name(),
                                                               height=4096,
-                                                              width=4096)
+                                                              width=4096,
+                                                              pos_x=2048,
+                                                              pos_y=2048)
 
                                 if not group:
                                     layered_file.add_layer(layer)
@@ -147,7 +149,6 @@ def generate_psds(export_path: Path, cache_path: Path, delete_on_success: bool =
                                                     layer=layer)
 
             loop_nodes(stack_root_nodes)
-        print(layered_file.layers)
         layered_file.compression = psapi.enum.Compression.rle
         layered_file.write(Path(os.path.join(str(export_path), f"{texture_set}.psd")))
 

@@ -1,0 +1,2 @@
+copy "meow_meow_export.py" "C:\Users\%USERNAME%\Documents\Adobe\Adobe Substance 3D Painter\python\plugins"
+"C:\Program Files (x86)\Steam\steamapps\common\Substance 3D Painter 2024\resources\pythonsdk\python.exe" -m pip install -r %~p0\requirements.txt
