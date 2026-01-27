@@ -13,8 +13,10 @@ Install the requirements.txt through the substance painter environment (I sugges
 
 ## How to use
 Once installed, you open the top left File menu, 
-close to the bottom you'll see Meow Meow Export, click it, and it'll export at your .spp directory
-inside a meow_meow_export folder c:
+close to the bottom you'll see Meow Meow Export, click it, and it'll open up a menu.
+Select export location and options in the menu, and press export. Files will be exported inside a meow_meow_export folder c:
+
+Note that exporting to the same folder will overwrite older files in meow_meow_export folder with the same name!
 
 ## Need any help?
 Although this project is made solely for personal purpose, if you need assistance or want any updates to the code, feel free to post an issue on this repository!
